@@ -2,19 +2,13 @@
     "files.exclude": {
       "**/*.o": true,
       "**/*.cmd": true,
-      "**/*.d": true,
-      "**/*.elf": true,
-      "**/*.bin": true,
+      "**/cache": true,
       "**/build": true,
-      //"**/crazyflie-firmware": true,
+      // //"**/crazyflie-firmware": true,
       "**/.gitignore": true,
       "**/.gitmodules": true,
       "**/app-config": true,
       "**/Kbuild": true,
       "**/Makefile": true
-    },
-    "files.associations": {
-      "led.h": "c",
-      "debug.h": "c"
     }
-  }
+}
