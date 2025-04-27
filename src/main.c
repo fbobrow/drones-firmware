@@ -3,21 +3,27 @@
 void motorTask(void) {
     while (1) {
         if (takeOff()) {
-            motor(MOTOR_M1, 0.2f);  // 20% de potência
+            motor(MOTOR_M1, 0.2f); 
+            motor(MOTOR_M2, 0.2f); 
+            motor(MOTOR_M3, 0.2f); 
+            motor(MOTOR_M4, 0.2f); 
         }
         else {
-            motor(MOTOR_M1, 0.0f);  // Desliga
+            motor(MOTOR_M1, 0.0f);
+            motor(MOTOR_M2, 0.0f);
+            motor(MOTOR_M3, 0.0f);
+            motor(MOTOR_M4, 0.0f);
         }
-        delay(100);            // 1 segundo
+        delay(100);            
     }
 }
 
 void ledTask(void) {
     while (1) {
-        led(0, true);   // LED 0 ligado
-        delay(500);     // 500ms
-        led(0, false);  // LED 0 desligado
-        delay(500);     // 500ms
+        led(0, true);  
+        delay(500);    
+        led(0, false); 
+        delay(500);    
     }
 }
 
