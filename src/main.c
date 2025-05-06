@@ -1,29 +1,90 @@
 #include "crazyflie.h"
 
-void motorTask(void) {
-    while (1) {
-        if (takeOff()) {
-            motor(MOTOR_M1, 0.2f); 
-            motor(MOTOR_M2, 0.2f); 
-            motor(MOTOR_M3, 0.2f); 
-            motor(MOTOR_M4, 0.2f); 
+// Physical constants
+const float pi = 3.1416;
+const float g = 9.81; // m/s^2
+
+// Quadcopter dimensions
+const float m = 30.0e-3;    // kg
+const float I_xx = 16.0e-6; // kg.m^2
+const float I_yy = 16.0e-6; // kg.m^2
+const float I_zz = 29.0e-6; // kg.m^2
+const float l = 33.0e-3;    // m
+
+// Motor constants
+const float a_2 = 1.160e-07;
+const float a_1 = 7.149e-10;
+
+// Propeller constants
+const float kl = 1.726e-08; // N.s^2/rad^2
+const float kd = 1.426e-10; // N.m.s^2/rad^2
+
+float f_t = 0.3f;
+float tau_phi = 0.0f;
+float tau_theta = 0.0f;
+float tau_psi = 0.001f;
+
+void mixerTask(void)
+{
+    while (1)
+    {
+        float pwm_1 = 0.0f;
+        float pwm_2 = 0.0f;
+        float pwm_3 = 0.0f;
+        float pwm_4 = 0.0f;
+        if (takeOff())
+        {
+            float omega_1 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) - tau_theta / (kl * l) - tau_psi / kd);
+            float omega_2 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) + tau_theta / (kl * l) + tau_psi / kd);
+            float omega_3 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) + tau_theta / (kl * l) - tau_psi / kd);
+            float omega_4 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) - tau_theta / (kl * l) + tau_psi / kd);
+            omega_1 = (omega_1 >= 0.0f) ? sqrtf(omega_1) : 0.0f;
+            omega_2 = (omega_2 >= 0.0f) ? sqrtf(omega_2) : 0.0f;
+            omega_3 = (omega_3 >= 0.0f) ? sqrtf(omega_3) : 0.0f;
+            omega_4 = (omega_4 >= 0.0f) ? sqrtf(omega_4) : 0.0f;
+            pwm_1 = a_2 * omega_1*omega_1 + a_1 * omega_1;
+            pwm_2 = a_2 * omega_2*omega_2 + a_1 * omega_2;
+            pwm_3 = a_2 * omega_3*omega_3 + a_1 * omega_3;
+            pwm_4 = a_2 * omega_4*omega_4 + a_1 * omega_4;
         }
-        else {
-            motor(MOTOR_M1, 0.0f);
-            motor(MOTOR_M2, 0.0f);
-            motor(MOTOR_M3, 0.0f);
-            motor(MOTOR_M4, 0.0f);
-        }
-        delay(100);            
+        motor(MOTOR_M1, pwm_1);
+        motor(MOTOR_M2, pwm_2);
+        motor(MOTOR_M3, pwm_3);
+        motor(MOTOR_M4, pwm_4);
+        delay(2);
     }
 }
 
-void ledTask(void) {
-    while (1) {
-        led(0, true);  
-        delay(500);    
-        led(0, false); 
-        delay(500);    
+// void motorTask(void)
+// {
+//     while (1)
+//     {
+//         if (takeOff())
+//         {
+//             motor(MOTOR_M1, 0.2f);
+//             motor(MOTOR_M2, 0.2f);
+//             motor(MOTOR_M3, 0.2f);
+//             motor(MOTOR_M4, 0.2f);
+//         }
+//         else
+//         {
+//             motor(MOTOR_M1, 0.0f);
+//             motor(MOTOR_M2, 0.0f);
+//             motor(MOTOR_M3, 0.0f);
+//             motor(MOTOR_M4, 0.0f);
+//         }
+//         delay(100);
+//     }
+// }
+
+void ledTask(void)
+{
+    while (1)
+    {
+        led(0, true);
+        delay(500);
+        led(0, false);
+        delay(500);
     }
 }
 
@@ -48,14 +109,14 @@ void ledTask(void) {
 // void debugPrintSetpoint(const setpoint_t *sp) {
 //   DEBUG_PRINT("---- SETPOINT ----\n");
 //   DEBUG_PRINT("timestamp: %lu\n", sp->timestamp);
-  
+
 //   debugPrintAttitude("attitude", &sp->attitude);
 //   debugPrintAttitude("attitudeRate", &sp->attitudeRate);
-  
+
 //   debugPrintQuat(&sp->attitudeQuaternion);
-  
+
 //   DEBUG_PRINT("thrust: %.3f\n", (double)sp->thrust);
-  
+
 //   debugPrintVec3("position", &sp->position);
 //   debugPrintVec3("velocity", &sp->velocity);
 //   debugPrintVec3("acceleration", &sp->acceleration);
@@ -80,8 +141,10 @@ void ledTask(void) {
 //     }
 // }
 
-void appMain(void *param) {
-    task(motorTask);
-    //task(ledTask);
-    //task(printTask);
+void appMain(void *param)
+{
+    // task(motorTask);
+    // task(ledTask);
+    // task(printTask);
+    task(mixerTask);
 }

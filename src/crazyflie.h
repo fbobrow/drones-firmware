@@ -6,6 +6,7 @@
 #include "led.h"
 #include "debug.h"
 #include "motors.h"
+#include "math.h"
 
 static inline void led(uint32_t id, bool value) {
     ledSet(id, value);
