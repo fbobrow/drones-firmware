@@ -39,4 +39,62 @@ int takeOff() {
     return setpoint.mode.x;
 }
 
+
+
+static float ax = 0.0f, ay = 0.0f, az = 0.0f;
+static float gx = 0.0f, gy = 0.0f, gz = 0.0f;
+
+#include "sensors.h"
+static sensorData_t sensors;
+static inline void readSensors(void) {
+    sensorsAcquire(&sensors);
+    ax = sensors.acc.x;
+    ay = sensors.acc.y;
+    az = sensors.acc.z;
+    gx = sensors.gyro.x;
+    gy = sensors.gyro.y;
+    gz = sensors.gyro.z;
+}
+
+// #include "imu.h"
+// static Axis3f acc, gyr;
+// static inline void readSensors(void) {
+//     imu6Read(&gyr,&acc);
+//     ax = acc.x;
+//     ay = acc.y;
+//     az = acc.z;
+//     gx = gyr.x;
+//     gy = gyr.y;
+//     gz = gyr.z;
+// }
+
+// #include "estimator.h"
+// #include "stabilizer.h"
+// static inline void readSensors(void) {
+//     const sensorData_t* s = stateEstimatorGetSensorData();
+//     ax = s->acc.x;
+//     ay = s->acc.y;
+//     az = s->acc.z;
+//     gx = s->gyro.x;
+//     gy = s->gyro.y;
+//     gz = s->gyro.z;
+// }
+
+// #include "imu_bmi088.h"
+// static Axis3f gyroRaw, accRaw;
+// static inline void readSensors(void) {
+//     imuBmi088GetData(&gyroRaw, &accRaw);  // Essa é a função correta para o BMI088
+
+//     ax = accRaw.x;
+//     ay = accRaw.y;
+//     az = accRaw.z;
+
+//     gx = gyroRaw.x;
+//     gy = gyroRaw.y;
+//     gz = gyroRaw.z;
+// }
+
+#include "supervisor.h"
+
+
 #endif 
