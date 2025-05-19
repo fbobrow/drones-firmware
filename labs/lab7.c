@@ -61,11 +61,11 @@ float phi_r, theta_r, psi_r;
 
 // Define log group for sending roll, pitch, yaw to the client (e.g., CFClient)
 float log_phi, log_theta, log_psi; // Logged values for visualization in degrees
-// LOG_GROUP_START(stateEstimate)
-// LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
-// LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
-// LOG_ADD_CORE(LOG_FLOAT, yaw, &log_psi)
-// LOG_GROUP_STOP(stateEstimate)
+LOG_GROUP_START(stateEstimate)
+LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
+LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
+LOG_ADD_CORE(LOG_FLOAT, yaw, &log_psi)
+LOG_GROUP_STOP(stateEstimate)
 
 // Computes control efforts based on desired position (from setpoint)
 void reference()
@@ -119,20 +119,35 @@ void motors()
     }
 }
 
-void imu()
+#include "estimator.h"
+
+void readSensors()
 {
-    // Acquire raw accelerometer and gyroscope data from sensors
-    sensorsAcquire(&sensors);
-
-    // Convert accelerometer data from g to m/s² and apply sign correction
-    ax = -sensors.acc.x * 9.81f;
-    ay = -sensors.acc.y * 9.81f;
-    az = -sensors.acc.z * 9.81f;
-
-    // Convert gyroscope data from deg/s to rad/s
-    gx = sensors.gyro.x * 3.14f / 180.0f;
-    gy = sensors.gyro.y * 3.14f / 180.0f;
-    gz = sensors.gyro.z * 3.14f / 180.0f;
+    measurement_t measurement;
+        while (estimatorDequeue(&measurement))
+        {
+            switch (measurement.type)
+            {
+            case MeasurementTypeAcceleration:
+                ax = -measurement.data.acceleration.acc.x * 9.81f;
+                ay = -measurement.data.acceleration.acc.y * 9.81f;
+                az = -measurement.data.acceleration.acc.z * 9.81f;
+                break;
+            case MeasurementTypeGyroscope:
+                gx = measurement.data.gyroscope.gyro.x * 3.14f / 180.0f;
+                gy = measurement.data.gyroscope.gyro.y * 3.14f / 180.0f;
+                gz = measurement.data.gyroscope.gyro.z * 3.14f / 180.0f;
+                break;
+            // case MeasurementTypeTOF:
+            //     d = measurement.data.tof.distance;
+            // case MeasurementTypeFlow:
+            //     px = measurement.data.flow.dpixelx;
+            //     py = measurement.data.flow.dpixely;
+            //     dt = measurement.data.flow.dt;
+            default:
+                break;
+            }
+        }
 }
 
 // Estimates roll, pitch and yaw from sensor readings using a complementary filter
@@ -185,7 +200,7 @@ void appMain(void *param)
         // Compute control inputs from position setpoint
         reference();
         //
-        imu();
+        readSensors();
         // Estimate attitude based on sensor data
         attitudeEstimator();
         //
@@ -195,7 +210,7 @@ void appMain(void *param)
         //
         motors();
         //
-        //logger();
+        logger();
         // Wait for 2 milliseconds before running the next iteration (500 Hz control loop)
         vTaskDelay(pdMS_TO_TICKS(2));
     }
