@@ -53,15 +53,19 @@ float phi, theta, psi; // Roll (ϕ), Pitch (θ), Yaw (ψ) angles [rad]
 float wx, wy, wz;      // Angular rates [rad/s]
 
 //
+float ax, ay, az;
+float gx, gy, gz;
+
+//
 float phi_r, theta_r, psi_r;
 
 // Define log group for sending roll, pitch, yaw to the client (e.g., CFClient)
 float log_phi, log_theta, log_psi; // Logged values for visualization in degrees
-LOG_GROUP_START(stateEstimate)
-LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
-LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
-LOG_ADD_CORE(LOG_FLOAT, yaw, &log_psi)
-LOG_GROUP_STOP(stateEstimate)
+// LOG_GROUP_START(stateEstimate)
+// LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
+// LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
+// LOG_ADD_CORE(LOG_FLOAT, yaw, &log_psi)
+// LOG_GROUP_STOP(stateEstimate)
 
 // Computes control efforts based on desired position (from setpoint)
 void reference()
@@ -71,64 +75,69 @@ void reference()
     // Compute control efforts (thrust and torques) based on setpoint position
     // These are proportional controllers for demonstration purposes
     f_t = roundf((setpoint.position.z) * 2.0f) / 100.0f;        // Thrust (N)
-    // phi_r = 0.0f;
-    // theta_r = 0.0f;
+    phi_r = 0.0f;
+    theta_r = 0.0f;
     psi_r = 0.0f;                                             
 }
 
 // Mixer function: converts total thrust and torques into individual motor speeds
 void mixer()
 {
+    // Compute squared angular velocities for each motor based on control allocation matrix
+    omega_1 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) - tau_theta / (kl * l) - tau_psi / kd);
+    omega_2 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) + tau_theta / (kl * l) + tau_psi / kd);
+    omega_3 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) + tau_theta / (kl * l) - tau_psi / kd);
+    omega_4 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) - tau_theta / (kl * l) + tau_psi / kd);
+
+    // Convert to actual angular velocities by taking square roots (ensuring non-negativity)
+    omega_1 = (omega_1 >= 0.0f) ? sqrtf(omega_1) : 0.0f;
+    omega_2 = (omega_2 >= 0.0f) ? sqrtf(omega_2) : 0.0f;
+    omega_3 = (omega_3 >= 0.0f) ? sqrtf(omega_3) : 0.0f;
+    omega_4 = (omega_4 >= 0.0f) ? sqrtf(omega_4) : 0.0f;
+
+    // Convert angular velocities to PWM commands using the quadratic motor model
+    pwm_1 = a_2 * omega_1 * omega_1 + a_1 * omega_1;
+    pwm_2 = a_2 * omega_2 * omega_2 + a_1 * omega_2;
+    pwm_3 = a_2 * omega_3 * omega_3 + a_1 * omega_3;
+    pwm_4 = a_2 * omega_4 * omega_4 + a_1 * omega_4;
+}
+
+void motors()
+{
     // Check if drone is armed (ready to fly)
     if (supervisorIsArmed())
     {
-        // Compute squared angular velocities for each motor based on control allocation matrix
-        omega_1 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) - tau_theta / (kl * l) - tau_psi / kd);
-        omega_2 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) + tau_theta / (kl * l) + tau_psi / kd);
-        omega_3 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) + tau_theta / (kl * l) - tau_psi / kd);
-        omega_4 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) - tau_theta / (kl * l) + tau_psi / kd);
-
-        // Convert to actual angular velocities by taking square roots (ensuring non-negativity)
-        omega_1 = (omega_1 >= 0.0f) ? sqrtf(omega_1) : 0.0f;
-        omega_2 = (omega_2 >= 0.0f) ? sqrtf(omega_2) : 0.0f;
-        omega_3 = (omega_3 >= 0.0f) ? sqrtf(omega_3) : 0.0f;
-        omega_4 = (omega_4 >= 0.0f) ? sqrtf(omega_4) : 0.0f;
-
-        // Convert angular velocities to PWM commands using the quadratic motor model
-        pwm_1 = a_2 * omega_1 * omega_1 + a_1 * omega_1;
-        pwm_2 = a_2 * omega_2 * omega_2 + a_1 * omega_2;
-        pwm_3 = a_2 * omega_3 * omega_3 + a_1 * omega_3;
-        pwm_4 = a_2 * omega_4 * omega_4 + a_1 * omega_4;
+        // Apply PWM to motors (scaled to 16-bit range)
+        motorsSetRatio(MOTOR_M1, pwm_1 * UINT16_MAX);
+        motorsSetRatio(MOTOR_M2, pwm_2 * UINT16_MAX);
+        motorsSetRatio(MOTOR_M3, pwm_3 * UINT16_MAX);
+        motorsSetRatio(MOTOR_M4, pwm_4 * UINT16_MAX);
     }
     else
     {
-        // If not armed, stop the motors (set PWM to zero)
-        pwm_1 = pwm_2 = pwm_3 = pwm_4 = 0.0f;
+        motorsStop();
     }
-
-    // Apply PWM to motors (scaled to 16-bit range)
-    motorsSetRatio(MOTOR_M1, pwm_1 * UINT16_MAX);
-    motorsSetRatio(MOTOR_M2, pwm_2 * UINT16_MAX);
-    motorsSetRatio(MOTOR_M3, pwm_3 * UINT16_MAX);
-    motorsSetRatio(MOTOR_M4, pwm_4 * UINT16_MAX);
 }
 
-// Estimates roll, pitch and yaw from sensor readings using a complementary filter
-void attitudeEstimator()
+void imu()
 {
     // Acquire raw accelerometer and gyroscope data from sensors
     sensorsAcquire(&sensors);
 
     // Convert accelerometer data from g to m/s² and apply sign correction
-    float ax = -sensors.acc.x * 9.81f;
-    float ay = -sensors.acc.y * 9.81f;
-    float az = -sensors.acc.z * 9.81f;
+    ax = -sensors.acc.x * 9.81f;
+    ay = -sensors.acc.y * 9.81f;
+    az = -sensors.acc.z * 9.81f;
 
     // Convert gyroscope data from deg/s to rad/s
-    float gx = sensors.gyro.x * 3.14f / 180.0f;
-    float gy = sensors.gyro.y * 3.14f / 180.0f;
-    float gz = sensors.gyro.z * 3.14f / 180.0f;
+    gx = sensors.gyro.x * 3.14f / 180.0f;
+    gy = sensors.gyro.y * 3.14f / 180.0f;
+    gz = sensors.gyro.z * 3.14f / 180.0f;
+}
 
+// Estimates roll, pitch and yaw from sensor readings using a complementary filter
+void attitudeEstimator()
+{
     // Store angular rates for possible use elsewhere
     wx = gx;
     wy = gy;
@@ -148,19 +157,23 @@ void attitudeEstimator()
     theta = (1.0f - (wc_att * dt)) * theta_g + (wc_att * dt) * theta_a;
     psi = psi_g; // No yaw correction from accelerometer (unobservable without magnetometer)
 
-    // Convert estimated angles to degrees and adjust sign for display
-    log_phi = phi * 180.0f / 3.14f;
-    log_theta = -theta * 180.0f / 3.14f; // Negative sign for CFClient convention
-    log_psi = psi * 180.0f / 3.14f;
 }
 
 //
 void attitudeController()
 {
     //
-    //tau_phi = I_xx*kd_phi*(phi_r-phi);//+kd_phi*(0.0f-wx);
-    tau_theta = I_yy*kp_theta*(theta_r-phi);//+kd_theta*(0.0f-wy);
-    // tau_psi = I_zz*kp_psi*(psi_r-phi)+kd_psi*(0.0f-wz);
+    tau_phi = I_xx*(kp_phi*(phi_r-phi)+kd_phi*(0.0f-wx));
+    tau_theta = I_yy*(kp_theta*(theta_r-theta)+kd_theta*(0.0f-wy));
+    tau_psi = I_zz*(kp_psi*(psi_r-psi)+kd_psi*(0.0f-wz));
+}
+
+void logger()
+{
+    // Convert estimated angles to degrees and adjust sign for display
+    log_phi = phi * 180.0f / 3.14f;
+    log_theta = -theta * 180.0f / 3.14f; // Negative sign for CFClient convention
+    log_psi = psi * 180.0f / 3.14f;
 }
 
 // Main application loop
@@ -171,12 +184,18 @@ void appMain(void *param)
     {
         // Compute control inputs from position setpoint
         reference();
+        //
+        imu();
         // Estimate attitude based on sensor data
         attitudeEstimator();
         //
         attitudeController();
         // Mix control efforts and send commands to motors
         mixer();
+        //
+        motors();
+        //
+        //logger();
         // Wait for 2 milliseconds before running the next iteration (500 Hz control loop)
         vTaskDelay(pdMS_TO_TICKS(2));
     }
