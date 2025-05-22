@@ -20,12 +20,12 @@ float I_zz = 40.0e-6; // Moment of inertia around Z [kg·m^2]
 float l = 35.0e-3;    // Arm length from center to motor [m]
 
 // Motor parameters (Lab 2)
-float a_2 = 6.18e-8; // Quadratic coefficient [PWM/(rad/s)^2]
-float a_1 = 2.34e-4; // Linear coefficient [PWM/(rad/s)]
+float a_2 = 6.2e-8; // Quadratic coefficient [PWM/(rad/s)^2]
+float a_1 = 2.4e-4; // Linear coefficient [PWM/(rad/s)]
 
 // Propeller parameters (Labs 3 and 4)
-float kl = 1.726e-08; // Lift coefficient [N·s^2/rad^2]
-float kd = 1.426e-10; // Drag coefficient [N·m·s^2/rad^2]
+float kl = 2.0e-08; // Lift coefficient [N·s^2/rad^2]
+float kd = 2.0e-10; // Drag coefficient [N·m·s^2/rad^2]
 
 // Attitude estimator configuration (Lab 6)
 float dt = 0.002;        // Time step [s] (2 ms sampling time)
