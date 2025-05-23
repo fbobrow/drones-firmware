@@ -8,41 +8,39 @@
 #include "debug.h"       // Debug printing functions (e.g., DEBUG_PRINT)
 #include "log.h"         // Logging utilities to send data to the CFClient
 
+// Global parameters
+static const float pi = 3.1416;             // Mathematical constant
+static const float g = 9.81;                // Gravitational acceleration [m/s^2]
+static const float dt = 0.005;              // Loop time step [s] (5 ms -> 200 Hz)
 
-// Global physical and timing constants
-float pi = 3.1416;
-float g = 9.81;   // Gravitational acceleration [m/s^2]
-float dt = 0.002; // Control loop time step [s] (2 ms => 500 Hz)
+// Sensors
+float ax, ay, az;                           // IMU - Accelerometer [m/s^2]
+float gx, gy, gz;                           // IMU - Gyroscope [rad/s]
+float d;                                    // Range [m]
+float px, py;                               // Optical flow [pixels]
 
-// PWM values [0.0 – 1.0] and corresponding angular speeds for each motor
-float pwm_1, pwm_2, pwm_3, pwm_4;
-float omega_1, omega_2, omega_3, omega_4;
+// Motors
+float pwm_1, pwm_2, pwm_3, pwm_4;           // PWM values [0.0-1.0] 
+float omega_1, omega_2, omega_3, omega_4;   // Angular velocities [rad/s]
 
-// Total thrust and torques in body frame
-float f_t, tau_phi, tau_theta, tau_psi;
+// System inputs
+float f_t;                                  // Total thrust force [N.m]
+float tau_phi, tau_theta, tau_psi;          // Torques [N.m]
 
-// Desired attitude and position references
-float phi_r, theta_r, psi_r;
-float x_r, y_r, z_r;
+// System references
+float phi_r, theta_r, psi_r;                // Euler angles [rad]
+float x_r, y_r, z_r;                        // Position [m]
 
-// Estimated Euler angles [rad] and angular rates [rad/s]
-float phi, theta, psi;  // Euler angles [rad]
-float wx, wy, wz;       // Angular velocity [rad/s]
-float x, y, z;          // Position [m]
-float vx, vy, vz;       // Velocity [m/s]
-
-// Accelerometer and gyroscope readings
-float ax, ay, az;       // IMU sensor - Accelerometer [m/s^2]
-float gx, gy, gz;       // IMU sensor - Gyroscope [rad/s]
-float d;                // Range sensor [m]
-float px, py;           // Optical flow sensor [pixels]
+// System states
+float phi, theta, psi;                      // Euler angles [rad]
+float wx, wy, wz;                           // Angular velocity [rad/s]
+float x, y, z;                              // Position [m]
+float vx, vy, vz;                           // Velocity [m/s]
 
 // Variables to send to CFClient via logging
 float log_phi, log_theta, log_psi;
 
-// -------------------------------
-// Logging group declaration
-// -------------------------------
+// 
 LOG_GROUP_START(stateEstimate)
 LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
 LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
@@ -55,19 +53,21 @@ LOG_ADD_CORE(LOG_FLOAT, vy, &vy)
 LOG_ADD_CORE(LOG_FLOAT, vz, &vz)
 LOG_GROUP_STOP(stateEstimate)
 
-// Reads reference setpoints from commander
+// Reads reference setpoints from commander module
 void reference()
 {
-    //
+    // Declare static variables to retain their values across function calls
     static setpoint_t setpoint;
-    static state_t state;  
-    ///
+    static state_t state; 
+
+    // Retrieve the current commanded setpoints and state from the commander module
     commanderGetSetpoint(&setpoint, &state);
-    //
-    z_r = setpoint.position.z;
-    x_r = setpoint.position.x;
-    y_r = setpoint.position.y;
-    psi_r = 0.0f; // Yaw reference is fixed
+
+    // Extract position references from the received setpoint
+    x_r = setpoint.position.x;  // X position reference [m]
+    y_r = 0.0f;  // Y position reference [m]
+    z_r = setpoint.position.z;  // Z position reference [m]
+    psi_r = setpoint.position.y*pi/2.0f;               // Yaw reference is fixed at zero [rad]
 }
 
 // Converts desired force/torques into motor commands
@@ -129,7 +129,7 @@ void motors()
 }
 
 // Sensor fusion from estimator queue
-void readSensors()
+void sensors()
 {
     static measurement_t measurement;
     while (estimatorDequeue(&measurement))
@@ -245,9 +245,9 @@ void verticalController()
 void horizontalEstimator()
 {
     static const float sigma = 2.19; // Optical flow scaling factor
-    static const float wc = 5.0;       // Correction frequency
+    static const float wc = 50.0;       // Correction frequency
 
-    // Predict motion
+    // Predict motion 
     x += vx * dt;
     y += vy * dt;
 
@@ -280,7 +280,7 @@ void appMain(void *param)
     while (true)
     {
         reference();             // Update references from user commands
-        readSensors();           // Read and parse sensor measurements
+        sensors();               // Read and parse sensor measurements
         attitudeEstimator();     // Estimate orientation
         verticalEstimator();     // Estimate altitude and vertical velocity
         horizontalEstimator();   // Estimate horizontal position and velocity
@@ -289,6 +289,6 @@ void appMain(void *param)
         attitudeController();    // Compute torques
         mixer();                 // Compute motor speeds and PWM
         motors();                // Apply motor commands
-        vTaskDelay(pdMS_TO_TICKS(2)); // Wait 2 ms (500 Hz loop rate)
+        vTaskDelay(pdMS_TO_TICKS(5)); // Wait 2 ms (500 Hz loop rate)
     }
 }
