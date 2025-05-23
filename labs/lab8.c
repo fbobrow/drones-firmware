@@ -8,19 +8,11 @@
 #include "debug.h"       // Debug printing functions (e.g., DEBUG_PRINT)
 #include "log.h"         // Logging utilities to send data to the CFClient
 
-// -------------------------------
+
 // Global physical and timing constants
-// -------------------------------
 float pi = 3.1416;
 float g = 9.81;   // Gravitational acceleration [m/s^2]
 float dt = 0.002; // Control loop time step [s] (2 ms => 500 Hz)
-
-// -------------------------------
-// Global state and control variables
-// -------------------------------
-setpoint_t setpoint;
-state_t state;
-sensorData_t sensors;
 
 // PWM values [0.0 – 1.0] and corresponding angular speeds for each motor
 float pwm_1, pwm_2, pwm_3, pwm_4;
@@ -29,30 +21,24 @@ float omega_1, omega_2, omega_3, omega_4;
 // Total thrust and torques in body frame
 float f_t, tau_phi, tau_theta, tau_psi;
 
-// Estimated Euler angles [rad] and angular rates [rad/s]
-float phi, theta, psi;
-float wx, wy, wz;
-
-// Position and velocity in world frame
-float x, y, z;
-float vx, vy, vz;
-
-// Accelerometer and gyroscope readings
-float ax, ay, az;
-float gx, gy, gz;
-
-// TOF (altimeter) and optical flow sensor measurements
-float d;
-float px, py;
-
 // Desired attitude and position references
 float phi_r, theta_r, psi_r;
 float x_r, y_r, z_r;
 
+// Estimated Euler angles [rad] and angular rates [rad/s]
+float phi, theta, psi;  // Euler angles [rad]
+float wx, wy, wz;       // Angular velocity [rad/s]
+float x, y, z;          // Position [m]
+float vx, vy, vz;       // Velocity [m/s]
+
+// Accelerometer and gyroscope readings
+float ax, ay, az;       // IMU sensor - Accelerometer [m/s^2]
+float gx, gy, gz;       // IMU sensor - Gyroscope [rad/s]
+float d;                // Range sensor [m]
+float px, py;           // Optical flow sensor [pixels]
+
 // Variables to send to CFClient via logging
 float log_phi, log_theta, log_psi;
-float log_x, log_y, log_z;
-float log_vx, log_vy, log_vz;
 
 // -------------------------------
 // Logging group declaration
@@ -61,29 +47,30 @@ LOG_GROUP_START(stateEstimate)
 LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
 LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
 LOG_ADD_CORE(LOG_FLOAT, yaw, &log_psi)
-LOG_ADD_CORE(LOG_FLOAT, x, &log_x)
-LOG_ADD_CORE(LOG_FLOAT, y, &log_y)
-LOG_ADD_CORE(LOG_FLOAT, z, &log_z)
-LOG_ADD_CORE(LOG_FLOAT, vx, &log_vx)
-LOG_ADD_CORE(LOG_FLOAT, vy, &log_vy)
-LOG_ADD_CORE(LOG_FLOAT, vz, &log_vz)
+LOG_ADD_CORE(LOG_FLOAT, x, &x)
+LOG_ADD_CORE(LOG_FLOAT, y, &y)
+LOG_ADD_CORE(LOG_FLOAT, z, &z)
+LOG_ADD_CORE(LOG_FLOAT, vx, &vx)
+LOG_ADD_CORE(LOG_FLOAT, vy, &vy)
+LOG_ADD_CORE(LOG_FLOAT, vz, &vz)
 LOG_GROUP_STOP(stateEstimate)
 
-// -------------------------------
 // Reads reference setpoints from commander
-// -------------------------------
 void reference()
 {
+    //
+    static setpoint_t setpoint;
+    static state_t state;  
+    ///
     commanderGetSetpoint(&setpoint, &state);
+    //
     z_r = setpoint.position.z;
     x_r = setpoint.position.x;
     y_r = setpoint.position.y;
     psi_r = 0.0f; // Yaw reference is fixed
 }
 
-// -------------------------------
 // Converts desired force/torques into motor commands
-// -------------------------------
 void mixer()
 {
     // Geometry and motor model parameters
@@ -112,14 +99,12 @@ void mixer()
     pwm_4 = a_2 * omega_4 * omega_4 + a_1 * omega_4;
 }
 
-// -------------------------------
 // Sends PWM signals to motors (only if drone is armed)
-// -------------------------------
 void motors()
 {
     if (supervisorIsArmed())
     {
-        if (setpoint.position.z > 0)
+        if (z_r > 0)
         {
             // Apply calculated PWM values
             motorsSetRatio(MOTOR_M1, pwm_1 * UINT16_MAX);
@@ -143,12 +128,10 @@ void motors()
     }
 }
 
-// -------------------------------
 // Sensor fusion from estimator queue
-// -------------------------------
 void readSensors()
 {
-    measurement_t measurement;
+    static measurement_t measurement;
     while (estimatorDequeue(&measurement))
     {
         switch (measurement.type)
@@ -167,8 +150,8 @@ void readSensors()
             d = measurement.data.tof.distance;
             break;
         case MeasurementTypeFlow:
-            px = measurement.data.flow.dpixelx;
-            py = measurement.data.flow.dpixely;
+            px = measurement.data.flow.dpixelx * 0.1f;
+            py = measurement.data.flow.dpixely * 0.1f;
             break;
         default:
             break;
@@ -176,9 +159,7 @@ void readSensors()
     }
 }
 
-// -------------------------------
-// Complementary filter for attitude estimation
-// -------------------------------
+// Estimates attitude using IMU
 void attitudeEstimator()
 {
     static const float wc = 1.0; // Cutoff frequency for complementary filter
@@ -201,11 +182,14 @@ void attitudeEstimator()
     phi = (1.0f - wc * dt) * phi_g + wc * dt * phi_a;
     theta = (1.0f - wc * dt) * theta_g + wc * dt * theta_a;
     psi = psi_g; // No absolute reference for yaw
+
+    //
+    log_phi = phi * 180.0f / pi;
+    log_theta = -theta * 180.0f / pi;
+    log_psi = psi * 180.0f / pi;
 }
 
-// -------------------------------
-// PD controller for attitude (roll, pitch, yaw)
-// -------------------------------
+// Control roll, pitch and yaw angles
 void attitudeController()
 {
     static const float I_xx = 20.0e-6;
@@ -220,9 +204,7 @@ void attitudeController()
     tau_psi = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (0.0f - wz));
 }
 
-// -------------------------------
 // Estimates vertical position using range sensor
-// -------------------------------
 void verticalEstimator()
 {
     static const float ld = 100.0;     // Gain for velocity correction
@@ -240,30 +222,29 @@ void verticalEstimator()
     z = z + (lp * dt_range) * (z_m - z);
 }
 
-// -------------------------------
-// Vertical controller (PD+I)
-// -------------------------------
-float z_int; // Integral term for vertical position
-
+// Control vertical position
 void verticalController()
 {
+    //
     float m = 37.0e-3;
 
+    //
     static const float kp = 5.41;
     static const float kd = 4.00;
     static const float ki = 5.41;
+    
+    // Integral term for vertical position
+    static float z_int; 
 
     // Compute total thrust required
     f_t = m * (g + ki * z_int + kp * (z_r - z) + kd * (0.0f - vz));
-    z_int += (z_r - z) * dt; // Integrate altitude error
+    z_int += (z_r - z) * dt; 
 }
 
-// -------------------------------
 // Estimates horizontal position using flow sensor
-// -------------------------------
 void horizontalEstimator()
 {
-    static const float sigma = 0.2654; // Optical flow scaling factor
+    static const float sigma = 2.19; // Optical flow scaling factor
     static const float wc = 5.0;       // Correction frequency
 
     // Predict motion
@@ -282,38 +263,18 @@ void horizontalEstimator()
     vy += wc * dt * (vy_m - vy);
 }
 
-// -------------------------------
-// Horizontal controller (PD)
-// -------------------------------
+// Control horizontal position
 void horizontalController()
 {
-    static const float kp = 5.41;
-    static const float kd = 4.00;
+    static const float kp = 2.40;
+    static const float kd = 2.67;
 
     // Inverse dynamics: convert position error to attitude references
     phi_r = -(1.0f / g) * (kp * (y_r - y) + kd * (0.0f - vy));
     theta_r = (1.0f / g) * (kp * (x_r - x) + kd * (0.0f - vx));
 }
 
-// -------------------------------
-// Updates values to be logged in CFClient
-// -------------------------------
-void logger()
-{
-    log_phi = phi * 180.0f / pi;
-    log_theta = -theta * 180.0f / pi;
-    log_psi = psi * 180.0f / pi;
-    log_x = x;
-    log_y = y;
-    log_z = z;
-    log_vx = vx;
-    log_vy = vy;
-    log_vz = vz;
-}
-
-// -------------------------------
 // Main application task (runs at 500 Hz)
-// -------------------------------
 void appMain(void *param)
 {
     while (true)
@@ -328,7 +289,6 @@ void appMain(void *param)
         attitudeController();    // Compute torques
         mixer();                 // Compute motor speeds and PWM
         motors();                // Apply motor commands
-        logger();                // Send data to log
         vTaskDelay(pdMS_TO_TICKS(2)); // Wait 2 ms (500 Hz loop rate)
     }
 }
