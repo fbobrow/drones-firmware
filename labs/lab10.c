@@ -23,14 +23,8 @@ float px, py;     // Optical flow [pixels]
 float pwm1, pwm2, pwm3, pwm4; // PWM values [0.0-1.0]
 
 // System inputs
-float ft;         // Total thrust force [N.m]
+float ft;         // Total thrust [N]
 float tx, ty, tz; // Torques [N.m]
-
-// System references
-float phi_r, theta_r, psi_r; // Euler angles [rad]
-float wx_r, wy_r, wz_r;      // Angular velocity [rad/s]
-float x_r, y_r, z_r;         // Position [m]
-float vx_r, vy_r, vz_r;      // Velocity [m/s]
 
 // System states
 float phi, theta, psi; // Euler angles [rad]
@@ -38,10 +32,16 @@ float wx, wy, wz;      // Angular velocity [rad/s]
 float x, y, z;         // Position [m]
 float vx, vy, vz;      // Velocity [m/s]
 
-// Variables to send to CFClient via logging
+// System references
+float phi_r, theta_r, psi_r; // Euler angles [rad]
+float wx_r, wy_r, wz_r;      // Angular velocity [rad/s]
+float x_r, y_r, z_r;         // Position [m]
+float vx_r, vy_r, vz_r;      // Velocity [m/s]
+
+// Auxiliary variables for logging Euler angles (CFClient uses degrees and not radians)
 float log_phi, log_theta, log_psi;
 
-//
+// Logging group that stream variables to CFClient.
 LOG_GROUP_START(stateEstimate)
 LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
 LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
@@ -93,7 +93,7 @@ void mixer()
     omega3 = (omega3 >= 0.0f) ? sqrtf(omega3) : 0.0f;
     omega4 = (omega4 >= 0.0f) ? sqrtf(omega4) : 0.0f;
 
-    // Convert to motor PWM using motor model (PWM = a2 * omega^2 + a1 * omega)
+    // Compute motor PWM using motor model
     pwm1 = a2 * omega1 * omega1 + a1 * omega1;
     pwm2 = a2 * omega2 * omega2 + a1 * omega2;
     pwm3 = a2 * omega3 * omega3 + a1 * omega3;
@@ -172,8 +172,8 @@ void sensors()
 // Estimates attitude using IMU (accelerometer + gyroscope)
 void attitudeEstimator()
 {
-    // Cutoff frequency for complementary filter
-    static const float wc = 1.0f; 
+    // Estimator parameters
+    static const float wc = 1.0f; // Cutoff frequency for complementary filter [rad/s]
 
     // Use gyroscope for integration
     wx = gx;
@@ -203,24 +203,28 @@ void attitudeEstimator()
 // Control roll, pitch and yaw angles
 void attitudeController()
 {
-    static const float I_xx = 20.0e-6f;
-    static const float I_yy = 20.0e-6f;
-    static const float I_zz = 40.0e-6f;
+    // Quadcopter parameters
+    static const float I_xx = 20.0e-6f; // Moment of inertia around x-axis [kg/m^2]
+    static const float I_yy = 20.0e-6f; // Moment of inertia around y-axis [kg/m^2]
+    static const float I_zz = 40.0e-6f; // Moment of inertia around z-axis [kg/m^2]
 
-    float kp = 240.28f;
-    float kd = 26.67f;
+    // Controller parameters (settling time of 0.3s and overshoot of 0,05%)
+    float kp = 240.28f; // State regulator gain for angle error [1/s^2]
+    float kd = 26.67f;  // State regulator gain for angular velocity [1/s]
 
+    // Compute torques required
     tx = I_xx * (kp * (phi_r - phi) + kd * (wx_r - wx));
     ty = I_yy * (kp * (theta_r - theta) + kd * (wy_r - wy));
-    tz = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (wz_r - wz));
+    tz = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (wz_r - wz)); // Settling time 2x slower (0.6s) for yaw
 }
 
 // Estimates vertical position using range sensor
 void verticalEstimator()
 {
-    static const float ld = 100.0f;      // Gain for velocity correction
-    static const float lp = 14.14f;      // Gain for position correction
-    static const float dt_range = 0.05f; // Update rate of range sensor
+    // Estimator parameters
+    static const float lp = 14.14f;      // State observer gain for position correction [1/s]
+    static const float ld = 100.0f;      // State observer gain for velocity correction [1/s^2]
+    static const float dt_range = 0.05f; // Update rate of range sensor [s] (50ms -> 20Hz)
 
     // Predict z based on last velocity
     z += vz * dt;
@@ -236,15 +240,15 @@ void verticalEstimator()
 // Control vertical position
 void verticalController()
 {
-    //
+    // Quadcopter parameters
     float m = 37.0e-3f;
 
-    //
-    static const float kp = 5.41f;
-    static const float kd = 4.00f;
-    static const float ki = 5.41f;
+    // Controller parameters (settling time of 2.0s and overshoot of 0,05%)
+    static const float kp = 5.41f; // State regulator gain for position error [1/s^2]
+    static const float kd = 4.00f; // State regulator gain for velocity error [1/s]
+    static const float ki = 5.41f; // State regulator gain for integral error [1/s^3]
 
-    // Integral term for vertical position
+    // Integral term for vertical position (static to retain value amoung function calls)
     static float z_int;
 
     // Compute total thrust required
@@ -277,17 +281,19 @@ void horizontalEstimator()
 // Control horizontal position
 void horizontalController()
 {
+    // Controller parameters (settling time of 3.0s and overshoot of 0,05%)
     static const float kp = 2.40f;
     static const float kd = 2.67f;
 
-    // Inverse dynamics: convert position error to attitude references
+    // Compute angle reference (nested control)
     phi_r = -(1.0f / g) * (kp * (y_r - y) + kd * (vy_r - vy));
     theta_r = (1.0f / g) * (kp * (x_r - x) + kd * (vx_r - vx));
 }
 
-// Main application task (runs at 500 Hz)
+// Main application task
 void appMain(void *param)
 {
+    // Infinite loop (runs at 200Hz)
     while (true)
     {
         reference();                  // Update references from user commands
@@ -300,6 +306,6 @@ void appMain(void *param)
         attitudeController();         // Compute torques
         mixer();                      // Compute motor speeds and PWM
         motors();                     // Apply motor commands
-        vTaskDelay(pdMS_TO_TICKS(5)); // Wait 2 ms (500 Hz loop rate)
+        vTaskDelay(pdMS_TO_TICKS(5)); // Wait 5 ms (200 Hz loop rate)
     }
 }
