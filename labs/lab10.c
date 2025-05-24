@@ -68,7 +68,7 @@ void reference()
     x_r = setpoint.position.x;               // X position reference [m]
     y_r = 0.0f;                              // Y position reference [m]
     z_r = setpoint.position.z;               // Z position reference [m]
-    psi_r = setpoint.position.y * pi / 2.0f; // Yaw reference is fixed at zero [rad]
+    psi_r = setpoint.position.y * pi / 2.0f; // Yaw angle reference [rad] (maps 0.5m -> 45º)
 }
 
 // Get sensor readings from estimator module
@@ -204,18 +204,18 @@ void attitudeEstimator()
 void attitudeController()
 {
     // Quadcopter parameters
-    static const float I_xx = 20.0e-6f; // Moment of inertia around x-axis [kg/m^2]
-    static const float I_yy = 20.0e-6f; // Moment of inertia around y-axis [kg/m^2]
-    static const float I_zz = 40.0e-6f; // Moment of inertia around z-axis [kg/m^2]
+    static const float Ixx = 20.0e-6f; // Moment of inertia around x-axis [kg/m^2]
+    static const float Iyy = 20.0e-6f; // Moment of inertia around y-axis [kg/m^2]
+    static const float Izz = 40.0e-6f; // Moment of inertia around z-axis [kg/m^2]
 
     // Controller parameters (settling time of 0.3s and overshoot of 0,05%)
     float kp = 240.28f; // State regulator gain for angle error [1/s^2]
     float kd = 26.67f;  // State regulator gain for angular velocity [1/s]
 
     // Compute torques required
-    tx = I_xx * (kp * (phi_r - phi) + kd * (wx_r - wx));
-    ty = I_yy * (kp * (theta_r - theta) + kd * (wy_r - wy));
-    tz = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (wz_r - wz)); // Settling time 2x slower (0.6s) for yaw
+    tx = Ixx * (kp * (phi_r - phi) + kd * (wx_r - wx));
+    ty = Iyy * (kp * (theta_r - theta) + kd * (wy_r - wy));
+    tz = Izz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (wz_r - wz)); // Settling time 2x slower (0.6s) for yaw
 }
 
 // Estimate vertical position/velocity from range sensor
@@ -226,13 +226,17 @@ void verticalEstimator()
     static const float ld = 100.0f;      // State observer gain for velocity correction [1/s^2]
     static const float dt_range = 0.05f; // Update rate of range sensor [s] (50ms -> 20Hz)
 
-    // Predict z based on last velocity
+    // Prediction step (system model)
     z += vz * dt;
+    // if (z > 0)
+    // {
+    //     w += (ft/m-g)*dt;
+    // }
 
-    // Get range measurement corrected for orientation
+    // Calculate measured distante from range sensor
     float z_m = d * cosf(phi) * cosf(theta);
 
-    // Correct velocity and position estimates
+    // Correction step (sensor)
     vz += (ld * dt_range) * (z_m - z);
     z += (lp * dt_range) * (z_m - z);
 }
@@ -259,21 +263,27 @@ void verticalController()
 // Estimate horizontal position/velocity from optical flow sensor
 void horizontalEstimator()
 {
+    // Estimator parameters
     static const float sigma = 2.19f; // Optical flow scaling factor
-    static const float wc = 50.0f;    // Correction frequency
+    static const float wc = 50.0f;    // Cutoff frequency for complementary filter [rad/s]
 
-    // Predict motion
+    // Prediction step (system model)
     x += vx * dt;
     y += vy * dt;
+    // if (z > 0)
+    // {
+    //     vx += theta * g * dt;
+    //     vy -= phi * g * dt;
+    // }
 
-    // Get corrected height for flow estimation
+    // Calculate range distance from estimates
     float d = z / (cosf(phi) * cosf(theta));
 
-    // Estimate velocity from optical flow
+    // Calculate measured velocity from optical flow
     float vx_m = (px * sigma + wy) * d;
     float vy_m = (py * sigma - wx) * d;
 
-    // Apply complementary correction
+    // Correction step (sensor)
     vx += wc * dt * (vx_m - vx);
     vy += wc * dt * (vy_m - vy);
 }
