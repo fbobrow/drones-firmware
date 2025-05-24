@@ -54,7 +54,7 @@ LOG_ADD_CORE(LOG_FLOAT, vy, &vy)
 LOG_ADD_CORE(LOG_FLOAT, vz, &vz)
 LOG_GROUP_STOP(stateEstimate)
 
-// Reads reference setpoints from commander module
+// Get reference setpoints from commander module
 void reference()
 {
     // Declare variables that store the most recent setpoint and state from commander
@@ -71,67 +71,7 @@ void reference()
     psi_r = setpoint.position.y * pi / 2.0f; // Yaw reference is fixed at zero [rad]
 }
 
-// Converts desired force/torques into motors PWM
-void mixer()
-{
-    // Quadcopter parameters
-    static const float l = 35.0e-3f;  // Distance from motor to quadcopter center of mass [m]
-    static const float a2 = 6.2e-8f;  // Quadratic motor model gain [s^2/rad^2]
-    static const float a1 = 2.4e-4f;  // Linear motor model gain [s/rad]
-    static const float kl = 2.0e-08f; // Lift coefficient [N.s^2]
-    static const float kd = 2.0e-10f; // Drag coefficient [N.m.s^2]
-
-    // Compute required motor angular velocities squared (omega^2)
-    float omega1 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) - ty / (kl * l) - tz / kd);
-    float omega2 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) + ty / (kl * l) + tz / kd);
-    float omega3 = (1.0f / 4.0f) * (ft / kl + tx / (kl * l) + ty / (kl * l) - tz / kd);
-    float omega4 = (1.0f / 4.0f) * (ft / kl + tx / (kl * l) - ty / (kl * l) + tz / kd);
-
-    // Clamp to non-negative and take square root
-    omega1 = (omega1 >= 0.0f) ? sqrtf(omega1) : 0.0f;
-    omega2 = (omega2 >= 0.0f) ? sqrtf(omega2) : 0.0f;
-    omega3 = (omega3 >= 0.0f) ? sqrtf(omega3) : 0.0f;
-    omega4 = (omega4 >= 0.0f) ? sqrtf(omega4) : 0.0f;
-
-    // Compute motor PWM using motor model
-    pwm1 = a2 * omega1 * omega1 + a1 * omega1;
-    pwm2 = a2 * omega2 * omega2 + a1 * omega2;
-    pwm3 = a2 * omega3 * omega3 + a1 * omega3;
-    pwm4 = a2 * omega4 * omega4 + a1 * omega4;
-}
-
-// Sends PWM signals to motors
-void motors()
-{
-    // Check is quadcopter is armed or disarmed
-    if (supervisorIsArmed())
-    {
-        // Check if quadcopter has been commanded to take-off or land
-        if (z_r > 0.0f)
-        {
-            // Apply calculated PWM values if is commanded to take-off
-            motorsSetRatio(MOTOR_M1, pwm1 * UINT16_MAX);
-            motorsSetRatio(MOTOR_M2, pwm2 * UINT16_MAX);
-            motorsSetRatio(MOTOR_M3, pwm3 * UINT16_MAX);
-            motorsSetRatio(MOTOR_M4, pwm4 * UINT16_MAX);
-        }
-        else
-        {
-            // Apply idle PWM value if is commanded to land
-            motorsSetRatio(MOTOR_M1, 0.1f * UINT16_MAX);
-            motorsSetRatio(MOTOR_M2, 0.1f * UINT16_MAX);
-            motorsSetRatio(MOTOR_M3, 0.1f * UINT16_MAX);
-            motorsSetRatio(MOTOR_M4, 0.1f * UINT16_MAX);
-        }
-    }
-    else
-    {
-        // Turn-off all motor if disarmed
-        motorsStop();
-    }
-}
-
-// Get sensor readings
+// Get sensor readings from estimator module
 void sensors()
 {
     // Declare variable that store the most recent measurement from estimator
@@ -169,7 +109,67 @@ void sensors()
     }
 }
 
-// Estimates attitude using IMU (accelerometer + gyroscope)
+// Compute motor commands
+void mixer()
+{
+    // Quadcopter parameters
+    static const float l = 35.0e-3f;  // Distance from motor to quadcopter center of mass [m]
+    static const float a2 = 6.2e-8f;  // Quadratic motor model gain [s^2/rad^2]
+    static const float a1 = 2.4e-4f;  // Linear motor model gain [s/rad]
+    static const float kl = 2.0e-08f; // Lift coefficient [N.s^2]
+    static const float kd = 2.0e-10f; // Drag coefficient [N.m.s^2]
+
+    // Compute required motor angular velocities squared (omega^2)
+    float omega1 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) - ty / (kl * l) - tz / kd);
+    float omega2 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) + ty / (kl * l) + tz / kd);
+    float omega3 = (1.0f / 4.0f) * (ft / kl + tx / (kl * l) + ty / (kl * l) - tz / kd);
+    float omega4 = (1.0f / 4.0f) * (ft / kl + tx / (kl * l) - ty / (kl * l) + tz / kd);
+
+    // Clamp to non-negative and take square root
+    omega1 = (omega1 >= 0.0f) ? sqrtf(omega1) : 0.0f;
+    omega2 = (omega2 >= 0.0f) ? sqrtf(omega2) : 0.0f;
+    omega3 = (omega3 >= 0.0f) ? sqrtf(omega3) : 0.0f;
+    omega4 = (omega4 >= 0.0f) ? sqrtf(omega4) : 0.0f;
+
+    // Compute motor PWM using motor model
+    pwm1 = a2 * omega1 * omega1 + a1 * omega1;
+    pwm2 = a2 * omega2 * omega2 + a1 * omega2;
+    pwm3 = a2 * omega3 * omega3 + a1 * omega3;
+    pwm4 = a2 * omega4 * omega4 + a1 * omega4;
+}
+
+// Apply motor commands
+void motors()
+{
+    // Check is quadcopter is armed or disarmed
+    if (supervisorIsArmed())
+    {
+        // Check if quadcopter has been commanded to take-off or land
+        if (z_r > 0.0f)
+        {
+            // Apply calculated PWM values if is commanded to take-off
+            motorsSetRatio(MOTOR_M1, pwm1 * UINT16_MAX);
+            motorsSetRatio(MOTOR_M2, pwm2 * UINT16_MAX);
+            motorsSetRatio(MOTOR_M3, pwm3 * UINT16_MAX);
+            motorsSetRatio(MOTOR_M4, pwm4 * UINT16_MAX);
+        }
+        else
+        {
+            // Apply idle PWM value if is commanded to land
+            motorsSetRatio(MOTOR_M1, 0.1f * UINT16_MAX);
+            motorsSetRatio(MOTOR_M2, 0.1f * UINT16_MAX);
+            motorsSetRatio(MOTOR_M3, 0.1f * UINT16_MAX);
+            motorsSetRatio(MOTOR_M4, 0.1f * UINT16_MAX);
+        }
+    }
+    else
+    {
+        // Turn-off all motor if disarmed
+        motorsStop();
+    }
+}
+
+// Estimate orientation from IMU sensor
 void attitudeEstimator()
 {
     // Estimator parameters
@@ -200,7 +200,7 @@ void attitudeEstimator()
     log_psi = psi * 180.0f / pi;
 }
 
-// Control roll, pitch and yaw angles
+// Compute desired torques
 void attitudeController()
 {
     // Quadcopter parameters
@@ -218,7 +218,7 @@ void attitudeController()
     tz = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (wz_r - wz)); // Settling time 2x slower (0.6s) for yaw
 }
 
-// Estimates vertical position using range sensor
+// Estimate vertical position/velocity from range sensor
 void verticalEstimator()
 {
     // Estimator parameters
@@ -237,7 +237,7 @@ void verticalEstimator()
     z += (lp * dt_range) * (z_m - z);
 }
 
-// Control vertical position
+// Compute desired total thrust
 void verticalController()
 {
     // Quadcopter parameters
@@ -256,7 +256,7 @@ void verticalController()
     z_int += (z_r - z) * dt;
 }
 
-// Estimates horizontal position using flow sensor
+// Estimate horizontal position/velocity from optical flow sensor
 void horizontalEstimator()
 {
     static const float sigma = 2.19f; // Optical flow scaling factor
@@ -278,7 +278,7 @@ void horizontalEstimator()
     vy += wc * dt * (vy_m - vy);
 }
 
-// Control horizontal position
+// Compute desired roll/pitch angles
 void horizontalController()
 {
     // Controller parameters (settling time of 3.0s and overshoot of 0,05%)
@@ -296,16 +296,16 @@ void appMain(void *param)
     // Infinite loop (runs at 200Hz)
     while (true)
     {
-        reference();                  // Update references from user commands
-        sensors();                    // Read and parse sensor measurements
-        attitudeEstimator();          // Estimate orientation
-        verticalEstimator();          // Estimate altitude and vertical velocity
-        horizontalEstimator();        // Estimate horizontal position and velocity
+        reference();                  // Get reference setpoints from commander module
+        sensors();                    // Get sensor readings from estimator module
+        attitudeEstimator();          // Estimate orientation from IMU sensor
+        verticalEstimator();          // Estimate vertical position/velocity from range sensro
+        horizontalEstimator();        // Estimate horizontal position/velocity from optical flow sensor
         horizontalController();       // Compute desired roll/pitch angles
-        verticalController();         // Compute thrust
-        attitudeController();         // Compute torques
-        mixer();                      // Compute motor speeds and PWM
+        verticalController();         // Compute desired total thrust
+        attitudeController();         // Compute desired torques
+        mixer();                      // Compute motor commands
         motors();                     // Apply motor commands
-        vTaskDelay(pdMS_TO_TICKS(5)); // Wait 5 ms (200 Hz loop rate)
+        vTaskDelay(pdMS_TO_TICKS(5)); // Wait 5 ms
     }
 }
