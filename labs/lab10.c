@@ -221,6 +221,9 @@ void attitudeController()
 // Estimate vertical position/velocity from range sensor
 void verticalEstimator()
 {
+    // Quadcopter parameters
+    float m = 37.0e-3f;
+
     // Estimator parameters
     static const float lp = 14.14f;      // State observer gain for position correction [1/s]
     static const float ld = 100.0f;      // State observer gain for velocity correction [1/s^2]
@@ -228,10 +231,7 @@ void verticalEstimator()
 
     // Prediction step (system model)
     z += vz * dt;
-    // if (z > 0)
-    // {
-    //     w += (ft/m-g)*dt;
-    // }
+    vz += (ft / m - g) * dt;
 
     // Calculate measured distante from range sensor
     float z_m = d * cosf(phi) * cosf(theta);
@@ -270,11 +270,8 @@ void horizontalEstimator()
     // Prediction step (system model)
     x += vx * dt;
     y += vy * dt;
-    // if (z > 0)
-    // {
-    //     vx += theta * g * dt;
-    //     vy -= phi * g * dt;
-    // }
+    vx += theta * g * dt;
+    vy -= phi * g * dt;
 
     // Calculate range distance from estimates
     float d = z / (cosf(phi) * cosf(theta));
