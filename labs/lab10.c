@@ -1,46 +1,47 @@
-#include "math.h"        // Math functions (e.g., sqrtf, roundf, powf)
-#include "FreeRTOS.h"    // FreeRTOS core definitions (needed for task handling and timing)
-#include "task.h"        // FreeRTOS task functions (e.g., vTaskDelay)
-#include "supervisor.h"  // Functions to check flight status (e.g., supervisorIsArmed)
-#include "commander.h"   // Access to commanded setpoints (e.g., commanderGetSetpoint)
-#include "estimator.h"   // Estimation framework for sensor fusion
-#include "motors.h"      // Low-level motor control interface (e.g., motorsSetRatio)
-#include "debug.h"       // Debug printing functions (e.g., DEBUG_PRINT)
-#include "log.h"         // Logging utilities to send data to the CFClient
+#include "math.h"       // Math functions (e.g., sqrtf, roundf, powf)
+#include "FreeRTOS.h"   // FreeRTOS core definitions (needed for task handling and timing)
+#include "task.h"       // FreeRTOS task functions (e.g., vTaskDelay)
+#include "supervisor.h" // Functions to check flight status (e.g., supervisorIsArmed)
+#include "commander.h"  // Access to commanded setpoints (e.g., commanderGetSetpoint)
+#include "estimator.h"  // Estimation framework for sensor fusion
+#include "motors.h"     // Low-level motor control interface (e.g., motorsSetRatio)
+#include "debug.h"      // Debug printing functions (e.g., DEBUG_PRINT)
+#include "log.h"        // Logging utilities to send data to the CFClient
 
 // Global parameters
-static const float pi = 3.1416;             // Mathematical constant
-static const float g = 9.81;                // Gravitational acceleration [m/s^2]
-static const float dt = 0.005;              // Loop time step [s] (5 ms -> 200 Hz)
+static const float pi = 3.1416f; // Mathematical constant
+static const float g = 9.81f;    // Gravitational acceleration [m/s^2]
+static const float dt = 0.005f;  // Loop time step [s] (5 ms -> 200 Hz)
 
 // Sensors
-float ax, ay, az;                           // IMU - Accelerometer [m/s^2]
-float gx, gy, gz;                           // IMU - Gyroscope [rad/s]
-float d;                                    // Range [m]
-float px, py;                               // Optical flow [pixels]
+float ax, ay, az; // Accelerometer [m/s^2]
+float gx, gy, gz; // Gyroscope [rad/s]
+float d;          // Range [m]
+float px, py;     // Optical flow [pixels]
 
 // Motors
-float pwm_1, pwm_2, pwm_3, pwm_4;           // PWM values [0.0-1.0] 
-float omega_1, omega_2, omega_3, omega_4;   // Angular velocities [rad/s]
+float pwm1, pwm2, pwm3, pwm4; // PWM values [0.0-1.0]
 
 // System inputs
-float f_t;                                  // Total thrust force [N.m]
-float tau_phi, tau_theta, tau_psi;          // Torques [N.m]
+float ft;         // Total thrust force [N.m]
+float tx, ty, tz; // Torques [N.m]
 
 // System references
-float phi_r, theta_r, psi_r;                // Euler angles [rad]
-float x_r, y_r, z_r;                        // Position [m]
+float phi_r, theta_r, psi_r; // Euler angles [rad]
+float wx_r, wy_r, wz_r;      // Angular velocity [rad/s]
+float x_r, y_r, z_r;         // Position [m]
+float vx_r, vy_r, vz_r;      // Velocity [m/s]
 
 // System states
-float phi, theta, psi;                      // Euler angles [rad]
-float wx, wy, wz;                           // Angular velocity [rad/s]
-float x, y, z;                              // Position [m]
-float vx, vy, vz;                           // Velocity [m/s]
+float phi, theta, psi; // Euler angles [rad]
+float wx, wy, wz;      // Angular velocity [rad/s]
+float x, y, z;         // Position [m]
+float vx, vy, vz;      // Velocity [m/s]
 
 // Variables to send to CFClient via logging
 float log_phi, log_theta, log_psi;
 
-// 
+//
 LOG_GROUP_START(stateEstimate)
 LOG_ADD_CORE(LOG_FLOAT, roll, &log_phi)
 LOG_ADD_CORE(LOG_FLOAT, pitch, &log_theta)
@@ -56,65 +57,67 @@ LOG_GROUP_STOP(stateEstimate)
 // Reads reference setpoints from commander module
 void reference()
 {
-    // Declare static variables to retain their values across function calls
+    // Declare variables that store the most recent setpoint and state from commander
     static setpoint_t setpoint;
-    static state_t state; 
+    static state_t state;
 
-    // Retrieve the current commanded setpoints and state from the commander module
+    // Retrieve the current commanded setpoints and state from commander module
     commanderGetSetpoint(&setpoint, &state);
 
     // Extract position references from the received setpoint
-    x_r = setpoint.position.x;  // X position reference [m]
-    y_r = 0.0f;  // Y position reference [m]
-    z_r = setpoint.position.z;  // Z position reference [m]
-    psi_r = setpoint.position.y*pi/2.0f;               // Yaw reference is fixed at zero [rad]
+    x_r = setpoint.position.x;               // X position reference [m]
+    y_r = 0.0f;                              // Y position reference [m]
+    z_r = setpoint.position.z;               // Z position reference [m]
+    psi_r = setpoint.position.y * pi / 2.0f; // Yaw reference is fixed at zero [rad]
 }
 
-// Converts desired force/torques into motor commands
+// Converts desired force/torques into motors PWM
 void mixer()
 {
-    // Geometry and motor model parameters
-    static const float l = 35.0e-3;  // Distance from center to motor [m]
-    static const float a_2 = 6.2e-8; // Quadratic motor model gain
-    static const float a_1 = 2.4e-4; // Linear motor model gain
-    static const float kl = 2.0e-08; // Thrust coefficient
-    static const float kd = 2.0e-10; // Drag (torque) coefficient
+    // Quadcopter parameters
+    static const float l = 35.0e-3f;  // Distance from motor to quadcopter center of mass [m]
+    static const float a2 = 6.2e-8f;  // Quadratic motor model gain [s^2/rad^2]
+    static const float a1 = 2.4e-4f;  // Linear motor model gain [s/rad]
+    static const float kl = 2.0e-08f; // Lift coefficient [N.s^2]
+    static const float kd = 2.0e-10f; // Drag coefficient [N.m.s^2]
 
-    // Compute required motor speeds squared (omega^2)
-    omega_1 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) - tau_theta / (kl * l) - tau_psi / kd);
-    omega_2 = (1.0f / 4.0f) * (f_t / kl - tau_phi / (kl * l) + tau_theta / (kl * l) + tau_psi / kd);
-    omega_3 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) + tau_theta / (kl * l) - tau_psi / kd);
-    omega_4 = (1.0f / 4.0f) * (f_t / kl + tau_phi / (kl * l) - tau_theta / (kl * l) + tau_psi / kd);
+    // Compute required motor angular velocities squared (omega^2)
+    float omega1 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) - ty / (kl * l) - tz / kd);
+    float omega2 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) + ty / (kl * l) + tz / kd);
+    float omega3 = (1.0f / 4.0f) * (ft / kl + tx / (kl * l) + ty / (kl * l) - tz / kd);
+    float omega4 = (1.0f / 4.0f) * (ft / kl + tx / (kl * l) - ty / (kl * l) + tz / kd);
 
     // Clamp to non-negative and take square root
-    omega_1 = (omega_1 >= 0.0f) ? sqrtf(omega_1) : 0.0f;
-    omega_2 = (omega_2 >= 0.0f) ? sqrtf(omega_2) : 0.0f;
-    omega_3 = (omega_3 >= 0.0f) ? sqrtf(omega_3) : 0.0f;
-    omega_4 = (omega_4 >= 0.0f) ? sqrtf(omega_4) : 0.0f;
+    omega1 = (omega1 >= 0.0f) ? sqrtf(omega1) : 0.0f;
+    omega2 = (omega2 >= 0.0f) ? sqrtf(omega2) : 0.0f;
+    omega3 = (omega3 >= 0.0f) ? sqrtf(omega3) : 0.0f;
+    omega4 = (omega4 >= 0.0f) ? sqrtf(omega4) : 0.0f;
 
-    // Convert angular speed to PWM using motor model
-    pwm_1 = a_2 * omega_1 * omega_1 + a_1 * omega_1;
-    pwm_2 = a_2 * omega_2 * omega_2 + a_1 * omega_2;
-    pwm_3 = a_2 * omega_3 * omega_3 + a_1 * omega_3;
-    pwm_4 = a_2 * omega_4 * omega_4 + a_1 * omega_4;
+    // Convert to motor PWM using motor model (PWM = a2 * omega^2 + a1 * omega)
+    pwm1 = a2 * omega1 * omega1 + a1 * omega1;
+    pwm2 = a2 * omega2 * omega2 + a1 * omega2;
+    pwm3 = a2 * omega3 * omega3 + a1 * omega3;
+    pwm4 = a2 * omega4 * omega4 + a1 * omega4;
 }
 
-// Sends PWM signals to motors (only if drone is armed)
+// Sends PWM signals to motors
 void motors()
 {
+    // Check is quadcopter is armed or disarmed
     if (supervisorIsArmed())
     {
-        if (z_r > 0)
+        // Check if quadcopter has been commanded to take-off or land
+        if (z_r > 0.0f)
         {
-            // Apply calculated PWM values
-            motorsSetRatio(MOTOR_M1, pwm_1 * UINT16_MAX);
-            motorsSetRatio(MOTOR_M2, pwm_2 * UINT16_MAX);
-            motorsSetRatio(MOTOR_M3, pwm_3 * UINT16_MAX);
-            motorsSetRatio(MOTOR_M4, pwm_4 * UINT16_MAX);
+            // Apply calculated PWM values if is commanded to take-off
+            motorsSetRatio(MOTOR_M1, pwm1 * UINT16_MAX);
+            motorsSetRatio(MOTOR_M2, pwm2 * UINT16_MAX);
+            motorsSetRatio(MOTOR_M3, pwm3 * UINT16_MAX);
+            motorsSetRatio(MOTOR_M4, pwm4 * UINT16_MAX);
         }
         else
         {
-            // Apply minimum thrust for safety
+            // Apply idle PWM value if is commanded to land
             motorsSetRatio(MOTOR_M1, 0.1f * UINT16_MAX);
             motorsSetRatio(MOTOR_M2, 0.1f * UINT16_MAX);
             motorsSetRatio(MOTOR_M3, 0.1f * UINT16_MAX);
@@ -123,32 +126,39 @@ void motors()
     }
     else
     {
-        // Motors off if disarmed
+        // Turn-off all motor if disarmed
         motorsStop();
     }
 }
 
-// Sensor fusion from estimator queue
+// Get sensor readings
 void sensors()
 {
+    // Declare variable that store the most recent measurement from estimator
     static measurement_t measurement;
+
+    // Retrieve the current measurement from estimator module
     while (estimatorDequeue(&measurement))
     {
         switch (measurement.type)
         {
+        // Get accelerometer sensor readings and convert [G's -> m/s^2]
         case MeasurementTypeAcceleration:
             ax = -measurement.data.acceleration.acc.x * 9.81f;
             ay = -measurement.data.acceleration.acc.y * 9.81f;
             az = -measurement.data.acceleration.acc.z * 9.81f;
             break;
+        // Get gyroscope sensor readings and convert [deg/s -> rad/s]
         case MeasurementTypeGyroscope:
             gx = measurement.data.gyroscope.gyro.x * pi / 180.0f;
             gy = measurement.data.gyroscope.gyro.y * pi / 180.0f;
             gz = measurement.data.gyroscope.gyro.z * pi / 180.0f;
             break;
+        // Get flow sensor readings [m]
         case MeasurementTypeTOF:
             d = measurement.data.tof.distance;
             break;
+        // Get optical flow sensor readings and convert [10.px -> px]
         case MeasurementTypeFlow:
             px = measurement.data.flow.dpixelx * 0.1f;
             py = measurement.data.flow.dpixely * 0.1f;
@@ -159,10 +169,11 @@ void sensors()
     }
 }
 
-// Estimates attitude using IMU
+// Estimates attitude using IMU (accelerometer + gyroscope)
 void attitudeEstimator()
 {
-    static const float wc = 1.0; // Cutoff frequency for complementary filter
+    // Cutoff frequency for complementary filter
+    static const float wc = 1.0f; 
 
     // Use gyroscope for integration
     wx = gx;
@@ -192,62 +203,62 @@ void attitudeEstimator()
 // Control roll, pitch and yaw angles
 void attitudeController()
 {
-    static const float I_xx = 20.0e-6;
-    static const float I_yy = 20.0e-6;
-    static const float I_zz = 40.0e-6;
+    static const float I_xx = 20.0e-6f;
+    static const float I_yy = 20.0e-6f;
+    static const float I_zz = 40.0e-6f;
 
-    float kp = 240.28;
-    float kd = 26.67;
+    float kp = 240.28f;
+    float kd = 26.67f;
 
-    tau_phi = I_xx * (kp * (phi_r - phi) + kd * (0.0f - wx));
-    tau_theta = I_yy * (kp * (theta_r - theta) + kd * (0.0f - wy));
-    tau_psi = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (0.0f - wz));
+    tx = I_xx * (kp * (phi_r - phi) + kd * (wx_r - wx));
+    ty = I_yy * (kp * (theta_r - theta) + kd * (wy_r - wy));
+    tz = I_zz * ((kp / 4.0f) * (psi_r - psi) + (kd / 2.0f) * (wz_r - wz));
 }
 
 // Estimates vertical position using range sensor
 void verticalEstimator()
 {
-    static const float ld = 100.0;     // Gain for velocity correction
-    static const float lp = 14.14;     // Gain for position correction
-    static const float dt_range = 0.05; // Update rate of range sensor
+    static const float ld = 100.0f;      // Gain for velocity correction
+    static const float lp = 14.14f;      // Gain for position correction
+    static const float dt_range = 0.05f; // Update rate of range sensor
 
     // Predict z based on last velocity
-    z = z + vz * dt;
+    z += vz * dt;
 
     // Get range measurement corrected for orientation
     float z_m = d * cosf(phi) * cosf(theta);
 
     // Correct velocity and position estimates
-    vz = vz + (ld * dt_range) * (z_m - z);
-    z = z + (lp * dt_range) * (z_m - z);
+    vz += (ld * dt_range) * (z_m - z);
+    z += (lp * dt_range) * (z_m - z);
 }
 
 // Control vertical position
 void verticalController()
 {
     //
-    float m = 37.0e-3;
+    float m = 37.0e-3f;
 
     //
-    static const float kp = 5.41;
-    static const float kd = 4.00;
-    static const float ki = 5.41;
-    
+    static const float kp = 5.41f;
+    static const float kd = 4.00f;
+    static const float ki = 5.41f;
+
     // Integral term for vertical position
-    static float z_int; 
+    static float z_int;
 
     // Compute total thrust required
-    f_t = m * (g + ki * z_int + kp * (z_r - z) + kd * (0.0f - vz));
-    z_int += (z_r - z) * dt; 
+    ft = m * (g + ki * z_int + kp * (z_r - z) + kd * (vz_r - vz));
+    z_int += (z_r - z) * dt;
 }
 
 // Estimates horizontal position using flow sensor
 void horizontalEstimator()
 {
-    static const float sigma = 2.19; // Optical flow scaling factor
-    static const float wc = 50.0;       // Correction frequency
+    static const float sigma = 2.19f; // Optical flow scaling factor
+    static const float wc = 50.0f;    // Correction frequency
 
-    // Predict motion 
+    // Predict motion
     x += vx * dt;
     y += vy * dt;
 
@@ -266,12 +277,12 @@ void horizontalEstimator()
 // Control horizontal position
 void horizontalController()
 {
-    static const float kp = 2.40;
-    static const float kd = 2.67;
+    static const float kp = 2.40f;
+    static const float kd = 2.67f;
 
     // Inverse dynamics: convert position error to attitude references
-    phi_r = -(1.0f / g) * (kp * (y_r - y) + kd * (0.0f - vy));
-    theta_r = (1.0f / g) * (kp * (x_r - x) + kd * (0.0f - vx));
+    phi_r = -(1.0f / g) * (kp * (y_r - y) + kd * (vy_r - vy));
+    theta_r = (1.0f / g) * (kp * (x_r - x) + kd * (vx_r - vx));
 }
 
 // Main application task (runs at 500 Hz)
@@ -279,16 +290,16 @@ void appMain(void *param)
 {
     while (true)
     {
-        reference();             // Update references from user commands
-        sensors();               // Read and parse sensor measurements
-        attitudeEstimator();     // Estimate orientation
-        verticalEstimator();     // Estimate altitude and vertical velocity
-        horizontalEstimator();   // Estimate horizontal position and velocity
-        horizontalController();  // Compute desired roll/pitch angles
-        verticalController();    // Compute thrust
-        attitudeController();    // Compute torques
-        mixer();                 // Compute motor speeds and PWM
-        motors();                // Apply motor commands
+        reference();                  // Update references from user commands
+        sensors();                    // Read and parse sensor measurements
+        attitudeEstimator();          // Estimate orientation
+        verticalEstimator();          // Estimate altitude and vertical velocity
+        horizontalEstimator();        // Estimate horizontal position and velocity
+        horizontalController();       // Compute desired roll/pitch angles
+        verticalController();         // Compute thrust
+        attitudeController();         // Compute torques
+        mixer();                      // Compute motor speeds and PWM
+        motors();                     // Apply motor commands
         vTaskDelay(pdMS_TO_TICKS(5)); // Wait 2 ms (500 Hz loop rate)
     }
 }
