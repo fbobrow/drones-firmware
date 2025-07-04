@@ -6,7 +6,7 @@
 
 // Motor constants (derived in Lab 2)
 // These represent coefficients of the quadratic motor model: PWM = a_2 * omega^2 + a_1 * omega
-const float a_2 = 6.18e-8;
+const float a_2 = 6.14e-8;
 const float a_1 = 2.34e-4;
 
 // Global variables to store the desired setpoint, the current state (not used here),

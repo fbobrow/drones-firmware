@@ -1,1 +1,1 @@
-obj-y += src/main.o
+obj-y += src/controller_horizontal.o

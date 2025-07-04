@@ -114,10 +114,10 @@ void mixer()
 {
     // Quadcopter parameters
     static const float l = 35.0e-3f;  // Distance from motor to quadcopter center of mass [m]
-    static const float a2 = 6.2e-8f;  // Quadratic motor model gain [s^2/rad^2]
-    static const float a1 = 2.4e-4f;  // Linear motor model gain [s/rad]
-    static const float kl = 2.0e-08f; // Lift coefficient [N.s^2]
-    static const float kd = 2.0e-10f; // Drag coefficient [N.m.s^2]
+    static const float a2 = 6.14e-8f;  // Quadratic motor model gain [s^2/rad^2]
+    static const float a1 = 2.34e-4f;  // Linear motor model gain [s/rad]
+    static const float kl = 3.18e-08f; // Lift constant [N.s^2]
+    static const float kd = 1.24e-10f; // Drag constant [N.m.s^2]
 
     // Compute required motor angular velocities squared (omega^2)
     float omega1 = (1.0f / 4.0f) * (ft / kl - tx / (kl * l) - ty / (kl * l) - tz / kd);
@@ -204,13 +204,13 @@ void attitudeEstimator()
 void attitudeController()
 {
     // Quadcopter parameters
-    static const float Ixx = 20.0e-6f; // Moment of inertia around x-axis [kg/m^2]
-    static const float Iyy = 20.0e-6f; // Moment of inertia around y-axis [kg/m^2]
-    static const float Izz = 40.0e-6f; // Moment of inertia around z-axis [kg/m^2]
+    static const float Ixx = 20.0e-6f; // Moment of inertia around x-axis [kg.m^2]
+    static const float Iyy = 20.0e-6f; // Moment of inertia around y-axis [kg.m^2]
+    static const float Izz = 40.0e-6f; // Moment of inertia around z-axis [kg.m^2]
 
     // Controller parameters (settling time of 0.3s and overshoot of 0,05%)
     float kp = 240.28f; // State regulator gain for angle error [1/s^2]
-    float kd = 26.67f;  // State regulator gain for angular velocity [1/s]
+    float kd = 26.67f;  // State regulator gain for angular velocity error [1/s]
 
     // Compute torques required
     tx = Ixx * (kp * (phi_r - phi) + kd * (wx_r - wx));
@@ -225,8 +225,8 @@ void verticalEstimator()
     float m = 37.0e-3f;
 
     // Estimator parameters
-    static const float lp = 14.14f;      // State observer gain for position correction [1/s]
-    static const float ld = 100.0f;      // State observer gain for velocity correction [1/s^2]
+    static const float wc = 10.0f;       // Cutoff frequency for 2nd order low-pass filter [rad/s]   
+    static const float zeta = 0.71f;     // Zeta for 2nd order low-pass filter []
     static const float dt_range = 0.05f; // Update rate of range sensor [s] (50ms -> 20Hz)
 
     // Prediction step (system model)
@@ -237,8 +237,8 @@ void verticalEstimator()
     float z_m = d * cosf(phi) * cosf(theta);
 
     // Correction step (sensor)
-    vz += (ld * dt_range) * (z_m - z);
-    z += (lp * dt_range) * (z_m - z);
+    vz += ((wc * wc) * dt_range) * (z_m - z);
+    z += ((2.0f * zeta * wc) * dt_range) * (z_m - z);
 }
 
 // Compute desired total thrust
@@ -264,8 +264,8 @@ void verticalController()
 void horizontalEstimator()
 {
     // Estimator parameters
-    static const float sigma = 2.19f; // Optical flow scaling factor
-    static const float wc = 50.0f;    // Cutoff frequency for complementary filter [rad/s]
+    static const float sigma = 2.19f; // Optical flow scaling factor [/(px.s)] (2 * tan (angle / 2) / res * dt )
+    static const float wc = 50.0f;    // Cutoff frequency for low-pass filter [rad/s]
 
     // Prediction step (system model)
     x += vx * dt;
